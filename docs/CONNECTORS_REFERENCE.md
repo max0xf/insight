@@ -1,0 +1,1047 @@
+# Connector Reference: Data Sources for Constructor Insight
+
+> Version 2.10 — February 2026
+> Based on: insight-spec PR #3 (Streams Proposal), PR #1 (GitHub/Bitbucket ETL)
+
+---
+
+## How Data Flows
+
+```
+Source API
+    │
+    ▼ Extract via connector
+┌──────────────────────────────────┐
+│  Raw table(s) per source         │  ← source-native schema
+└──────────────────────────────────┘
+    │
+    ▼ Normalize + unify
+┌──────────────────────────────────┐
+│  Unified stream table (class)    │  ← one table per class, all sources
+└──────────────────────────────────┘
+    │
+    ▼
+Silver → Gold
+```
+
+---
+
+## Source 1: GitHub (Version Control)
+
+**Why multiple tables:** Git data is inherently relational — a commit has many files, a PR has many reviewers, comments, and commits. These are genuine 1:N relationships.
+
+**API:** REST v3 + GraphQL v4. User identity: `login` (username) + numeric `id`. Email comes from the commit object, not the API user record. PRs have a formal review model with states (`APPROVED` / `CHANGES_REQUESTED` / `COMMENTED` / `DISMISSED`).
+
+---
+
+### `github_repositories`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `owner` | String | Organization or user login |
+| `repo_name` | String | Repository name |
+| `full_name` | String | Full path, e.g. `org/repo` |
+| `description` | String | Repository description |
+| `is_private` | Int | 1 if private |
+| `language` | String | Primary programming language |
+| `size` | Int | Repository size in KB |
+| `created_at` | DateTime | Repository creation date |
+| `updated_at` | DateTime | Last update |
+| `pushed_at` | DateTime | Date of most recent push |
+| `default_branch` | String | Default branch name |
+| `is_empty` | Int | 1 if no commits |
+| `metadata` | String (JSON) | Full API response |
+
+---
+
+### `github_branches`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `owner` | String | Repository owner |
+| `repo_name` | String | Repository name |
+| `branch_name` | String | Branch name |
+| `is_default` | Int | 1 if default branch |
+| `last_commit_hash` | String | Last collected commit — cursor for incremental sync |
+| `last_commit_date` | DateTime | Date of last commit |
+| `last_checked_at` | DateTime | When this branch was last checked |
+
+---
+
+### `github_commits`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `owner` | String | Repository owner |
+| `repo_name` | String | Repository name |
+| `commit_hash` | String | Git SHA-1 (40 chars) |
+| `branch` | String | Branch where commit was found |
+| `author_name` | String | Commit author name |
+| `author_email` | String | Author email — used for identity resolution |
+| `author_login` | String | GitHub username of author (if matched) |
+| `committer_name` | String | Committer name |
+| `committer_email` | String | Committer email |
+| `message` | String | Commit message |
+| `date` | DateTime | Commit timestamp |
+| `parents` | String (JSON) | Parent commit hashes — len > 1 = merge commit |
+| `files_changed` | Int | Number of files modified |
+| `lines_added` | Int | Total lines added |
+| `lines_removed` | Int | Total lines removed |
+| `is_merge_commit` | Int | 1 if merge commit |
+| `language_breakdown` | String (JSON) | Lines per language, e.g. `{"TypeScript": 120}` |
+| `ai_percentage` | Float | AI-generated code estimate (0.0–1.0) |
+| `ai_thirdparty_flag` | Int | 1 if AI-detected third-party code |
+| `scancode_thirdparty_flag` | Int | 1 if license scanner detected third-party |
+| `metadata` | String (JSON) | Full API response |
+
+---
+
+### `github_commit_files` — Per-file line changes
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `owner` | String | Repository owner |
+| `repo_name` | String | Repository name |
+| `commit_hash` | String | Parent commit |
+| `file_path` | String | Full file path |
+| `file_extension` | String | File extension |
+| `lines_added` | Int | Lines added in this file |
+| `lines_removed` | Int | Lines removed in this file |
+| `ai_thirdparty_flag` | Int | AI-detected third-party code |
+| `scancode_thirdparty_flag` | Int | License scanner detected third-party |
+| `scancode_metadata` | String (JSON) | License and copyright info |
+
+---
+
+### `github_pull_requests`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `owner` | String | Repository owner |
+| `repo_name` | String | Repository name |
+| `pr_number` | Int | PR number (unique per repo) |
+| `node_id` | String | GraphQL global node ID |
+| `title` | String | PR title |
+| `body` | String | PR description |
+| `state` | String | `open` / `closed` / `merged` |
+| `draft` | Int | 1 if draft PR |
+| `author_login` | String | PR author GitHub login |
+| `author_email` | String | Author email (from commit) |
+| `head_branch` | String | Source branch |
+| `base_branch` | String | Target branch |
+| `created_at` | DateTime | PR creation time |
+| `updated_at` | DateTime | Last update |
+| `merged_at` | DateTime | Merge time (NULL if not merged) |
+| `closed_at` | DateTime | Close time |
+| `merged_by_login` | String | GitHub login of who merged |
+| `merge_commit_hash` | String | Hash of merge commit |
+| `files_changed` | Int | Files modified |
+| `lines_added` | Int | Lines added |
+| `lines_removed` | Int | Lines removed |
+| `commit_count` | Int | Number of commits in PR |
+| `comment_count` | Int | Number of general comments |
+| `review_comment_count` | Int | Number of inline review comments |
+| `duration_seconds` | Int | Time from creation to close |
+| `ticket_refs` | String (JSON) | Extracted issue / ticket IDs |
+
+---
+
+### `github_pull_request_reviews` — Formal review submissions
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `owner` / `repo_name` | String | Repository reference |
+| `pr_number` | Int | Parent PR |
+| `review_id` | Int | Review unique ID |
+| `reviewer_login` | String | Reviewer GitHub login |
+| `reviewer_email` | String | Reviewer email |
+| `state` | String | `APPROVED` / `CHANGES_REQUESTED` / `COMMENTED` / `DISMISSED` |
+| `submitted_at` | DateTime | Review submission time |
+
+GitHub's formal review model distinguishes review state from plain comments — Bitbucket and GitLab do not have an equivalent.
+
+---
+
+### `github_pull_request_comments`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `owner` / `repo_name` | String | Repository reference |
+| `pr_number` | Int | Parent PR |
+| `comment_id` | Int | Comment unique ID |
+| `comment_type` | String | `issue_comment` (general) / `review_comment` (inline on file) |
+| `content` | String | Comment text (Markdown) |
+| `author_login` | String | Comment author login |
+| `author_email` | String | Author email |
+| `created_at` / `updated_at` | DateTime | Timestamps |
+| `file_path` | String | File path for inline comments (NULL for general) |
+| `line_number` | Int | Line number for inline comments (NULL for general) |
+| `in_reply_to_id` | Int | Parent comment ID for threaded replies |
+
+---
+
+### `github_pull_request_commits`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `owner` / `repo_name` | String | Repository reference |
+| `pr_number` | Int | Parent PR |
+| `commit_hash` | String | Commit SHA |
+| `commit_order` | Int | Order within PR (0-indexed) |
+
+---
+
+### `github_ticket_refs` — Ticket references extracted from PRs and commits
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `external_ticket_id` | String | Ticket ID, e.g. `PROJ-123` |
+| `owner` / `repo_name` | String | Repository reference |
+| `pr_number` | Int | Associated PR (NULL if from commit) |
+| `commit_hash` | String | Associated commit (NULL if from PR) |
+
+Links code activity back to task tracker items without requiring real-time joins.
+
+---
+
+### `github_collection_runs` — Connector execution log
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `run_id` | String | Unique run identifier |
+| `started_at` / `completed_at` | DateTime | Run timing |
+| `status` | String | `running` / `completed` / `failed` |
+| `repos_processed` | Int | Repositories processed |
+| `commits_collected` | Int | Commits collected |
+| `prs_collected` | Int | PRs collected |
+| `api_calls` | Int | API calls made |
+| `errors` | Int | Errors encountered |
+| `settings` | String (JSON) | Collection configuration |
+
+Monitoring table — not an analytics source.
+
+---
+
+## Source 2: Bitbucket (Version Control)
+
+**Same 9 data tables as GitHub** — repositories, branches, commits, commit files, pull requests, pull request reviewers, pull request comments, pull request commits, ticket refs — plus `bitbucket_collection_runs`. All with `bitbucket_` prefix.
+
+**API:** REST v1/v2. Key structural differences from GitHub:
+
+| Aspect | GitHub | Bitbucket |
+|--------|--------|-----------|
+| User identity | `login` (username) | `uuid` + `account_id` |
+| Namespace field | `owner` | `workspace` |
+| PR review model | Formal reviews with `state` (`APPROVED` / `CHANGES_REQUESTED` / etc.) | Simple reviewer list with `status` (`APPROVED` / `UNAPPROVED` / `NEEDS_WORK`) |
+| Comment severity | — | `severity`: `NORMAL` / `BLOCKER` (blocking comments must be resolved before merge) |
+| PR state values | `open` / `closed` / `merged` | `OPEN` / `MERGED` / `DECLINED` |
+| Draft PRs | `draft` boolean | Not supported |
+| Merged by | `merged_by_login` | Not returned by API |
+| Review comments | `comment_type` distinguishes general vs inline | All comments are the same kind |
+
+**Bitbucket-specific field differences:**
+
+- `bitbucket_pull_requests`: `workspace` instead of `owner`; no `draft`, no `merged_by_login`
+- `bitbucket_pull_request_reviewers`: `reviewer_uuid`, `reviewer_account_id`, `status` (`APPROVED` / `UNAPPROVED` / `NEEDS_WORK`) — no separate review state table
+- `bitbucket_pull_request_comments`: adds `severity` (`NORMAL` / `BLOCKER`); no `comment_type`, no `in_reply_to_id`
+
+---
+
+## Source 3: GitLab (Version Control)
+
+**Same logical structure** — repositories, branches, commits, merge requests, reviewers, comments, commits-in-MR, ticket refs, collection runs — all with `gitlab_` prefix.
+
+**API:** REST v4. Key structural differences from GitHub:
+
+| Aspect | GitHub | GitLab |
+|--------|--------|--------|
+| PR terminology | Pull Request | Merge Request |
+| PR identifier | `pr_number` (per-repo) | `mr_iid` (per-project) + `mr_id` (global) |
+| User identity | `login` | `username` + numeric `id` |
+| Commit file stats | Inline in `github_commits` + `github_commit_files` | Separate `gitlab_num_stat` table; file paths in `gitlab_files` lookup |
+| Review model | `github_pull_request_reviews` with state | `gitlab_mr_approvals` — approval only, no `CHANGES_REQUESTED` |
+| MR state values | `open` / `closed` / `merged` | `opened` / `closed` / `merged` / `locked` |
+| Draft MRs | `draft` boolean | `work_in_progress` boolean (legacy `WIP:` title prefix) |
+
+**GitLab-specific tables** (replace or supplement GitHub equivalents):
+
+- `gitlab_num_stat` — per-file line changes linked to commits (separate table, not inline in `gitlab_commits`)
+- `gitlab_files` — file path lookup table used by `gitlab_num_stat`
+- `gitlab_mr_approvals` — who approved an MR (replaces `github_pull_request_reviews`; approval only, no state transitions)
+
+---
+
+## Source 4: YouTrack (Task Tracking)
+
+**Why multiple tables:** Issue and history are a genuine 1:N relationship — one issue has many field-change events. Merging would require either denormalization (repeat issue metadata on every history row) or loss of the history model entirely.
+
+---
+
+### `youtrack_issue` — Issue identifiers and timestamps
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `youtrack_id` | text | YouTrack internal ID, e.g. `2-12345` |
+| `id_readable` | text | Human-readable ID, e.g. `MON-123` |
+| `created` | timestamp | Issue creation timestamp |
+| `updated` | timestamp | Last update — cursor for incremental sync |
+
+Intentionally minimal. All state lives in the history table.
+
+---
+
+### `youtrack_issue_history` — Complete field change log
+
+Every state transition, reassignment, and field update is a separate row.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id_readable` | varchar | Human-readable issue ID |
+| `issue_youtrack_id` | varchar | Parent issue's internal ID |
+| `author_youtrack_id` | varchar | Who made the change |
+| `activity_id` | varchar | Batch ID — multiple changes in one operation share this |
+| `created_at` | timestamptz | When the change was made |
+| `field_id` | varchar | Machine-readable field identifier |
+| `field_name` | varchar | Human-readable field name, e.g. `State`, `Assignee` |
+| `value` | jsonb | New field value after the change |
+| `value_id` | varchar | Unique value change ID — for deduplication |
+
+**`value` varies by field type:** string for State/Priority, object `{"name": "...", "id": "..."}` for user fields, array for tags.
+
+---
+
+### `youtrack_user` — User directory
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `youtrack_id` | varchar | YouTrack internal user ID |
+| `email` | varchar | Email — primary key for cross-system identity resolution |
+| `full_name` | varchar | Display name |
+| `username` | varchar | Login username |
+
+---
+
+## Source 5: Jira (Task Tracking)
+
+**Same model as YouTrack** — issue + full changelog history + user directory. Three tables with the same logical structure.
+
+**Key API difference from YouTrack:** Jira changelog stores both the old (`from`) and new (`to`) values for each field change, and uses Atlassian account IDs (not internal numeric IDs) as user identifiers.
+
+---
+
+### `jira_issue` — Issue identifiers and timestamps
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `jira_id` | text | Jira internal numeric ID, e.g. `10001` |
+| `id_readable` | text | Human-readable key, e.g. `PROJ-123` |
+| `project_key` | text | Project key, e.g. `PROJ` |
+| `created` | timestamp | Issue creation timestamp |
+| `updated` | timestamp | Last update — cursor for incremental sync |
+
+Intentionally minimal. All state lives in the changelog table.
+
+---
+
+### `jira_issue_history` — Complete changelog (field change log)
+
+Every state transition, reassignment, and field update is a separate row. Jira's changelog API returns one entry per operation; each entry may contain multiple field changes — each stored as a separate row.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id_readable` | varchar | Human-readable issue key, e.g. `PROJ-123` |
+| `issue_jira_id` | varchar | Parent issue's internal numeric ID |
+| `author_account_id` | varchar | Atlassian account ID of who made the change |
+| `changelog_id` | varchar | Changelog entry ID — multiple field changes in one operation share this |
+| `created_at` | timestamptz | When the change was made |
+| `field_id` | varchar | Machine-readable field identifier |
+| `field_name` | varchar | Human-readable field name, e.g. `status`, `assignee` |
+| `value_from` | varchar | Previous raw value (ID or key) |
+| `value_from_string` | varchar | Previous human-readable value, e.g. `In Progress` |
+| `value_to` | varchar | New raw value after the change |
+| `value_to_string` | varchar | New human-readable value, e.g. `Done` |
+
+**`changelog_id` groups related changes:** when a user performs one action that updates multiple fields simultaneously, all resulting rows share the same `changelog_id`.
+
+---
+
+### `jira_user` — User directory
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `account_id` | varchar | Atlassian account ID — primary key |
+| `email` | varchar | Email — primary key for cross-system identity resolution |
+| `display_name` | varchar | Display name |
+| `account_type` | varchar | `atlassian` / `app` / `customer` |
+| `active` | boolean | Whether the account is active |
+
+---
+
+## Source 6: Microsoft 365 (Communication)
+
+**One wide table per user per date.** M365 exposes five separate report endpoints, all describing the same entity — a user's activity on a given date — with the same primary key: `userPrincipalName + reportRefreshDate`. The connector calls all endpoints and joins the responses into a single row.
+
+**Naming conflicts resolved with prefixes:** OneDrive and SharePoint share identical field names — prefixed with `od_` and `sp_` respectively. M365 Copilot fields use `cop_` prefix.
+
+**M365 Copilot** (`getMicrosoft365CopilotUsageUserDetail`) is a separate endpoint but joins on the same key — it covers AI usage across Office apps (Chat, Teams, Word, Excel, PowerPoint, Outlook, OneNote, Loop). Not to be confused with GitHub Copilot (Source 15), which is a developer tool with a separate API.
+
+> **Critical:** M365 Graph API returns only the last 7–30 days of activity. Data cannot be re-fetched once the window passes — loss is permanent.
+
+---
+
+### `m365_raw` — All M365 activity per user per date
+
+| Field                                 | Type    | Description                            |
+| ------------------------------------- | ------- | -------------------------------------- |
+| `user_principal_name`                 | text    | User email (UPN) — primary key         |
+| `report_refresh_date`                 | date    | Report date — primary key              |
+| `display_name`                        | text    | User display name                      |
+| `is_deleted`                          | boolean | Whether the account is deleted         |
+| `assigned_products`                   | jsonb   | M365 licenses assigned                 |
+| **Email**                             |         |                                        |
+| `email_send_count`                    | numeric | Emails sent                            |
+| `email_receive_count`                 | numeric | Emails received                        |
+| `email_read_count`                    | numeric | Emails read                            |
+| `email_meeting_created_count`         | numeric | Meetings created via email             |
+| `email_meeting_interacted_count`      | numeric | Meeting interactions via email         |
+| `email_last_activity_date`            | date    | Last email activity                    |
+| **Teams**                             |         |                                        |
+| `teams_chat_group_count`              | numeric | Messages in group/team chats           |
+| `teams_chat_private_count`            | numeric | Messages in private (1:1) chats        |
+| `teams_channel_post_count`            | numeric | Posts published in team channels       |
+| `teams_channel_reply_count`           | numeric | Replies to channel posts               |
+| `teams_call_count`                    | numeric | Calls made                             |
+| `teams_meetings_attended`             | numeric | Meetings attended                      |
+| `teams_meetings_organized`            | numeric | Meetings organized                     |
+| `teams_adhoc_meetings_attended`       | numeric | Ad-hoc (unscheduled) meetings attended |
+| `teams_adhoc_meetings_organized`      | numeric | Ad-hoc meetings organized              |
+| `teams_scheduled_onetimes_attended`   | numeric | One-time scheduled meetings attended   |
+| `teams_scheduled_onetimes_organized`  | numeric | One-time scheduled meetings organized  |
+| `teams_scheduled_recurring_attended`  | numeric | Recurring meetings attended            |
+| `teams_scheduled_recurring_organized` | numeric | Recurring meetings organized           |
+| `teams_audio_duration`                | text    | Total audio call duration              |
+| `teams_video_duration`                | text    | Total video duration                   |
+| `teams_screenshare_duration`          | text    | Total screen sharing duration          |
+| `teams_urgent_messages`               | numeric | Messages sent with urgent priority     |
+| `teams_is_licensed`                   | boolean | Whether user has Teams license         |
+| `teams_is_external`                   | boolean | Whether user is an external guest      |
+| `teams_last_activity_date`            | date    | Last Teams activity                    |
+| **OneDrive**                          |         |                                        |
+| `od_viewed_or_edited_files`           | numeric | Files viewed or edited                 |
+| `od_synced_files`                     | numeric | Files synced via desktop client        |
+| `od_shared_internally`                | numeric | Files shared with internal users       |
+| `od_shared_externally`                | numeric | Files shared externally                |
+| `od_last_activity_date`               | date    | Last OneDrive activity                 |
+| **SharePoint**                        |         |                                        |
+| `sp_viewed_or_edited_files`           | numeric | SharePoint files viewed or edited      |
+| `sp_visited_pages`                    | numeric | SharePoint pages visited               |
+| `sp_synced_files`                     | numeric | Files synced from SharePoint           |
+| `sp_shared_internally`                | numeric | Files shared internally                |
+| `sp_shared_externally`                | numeric | Files shared externally                |
+| `sp_last_activity_date`               | date    | Last SharePoint activity               |
+| **M365 Copilot**                      |         |                                        |
+| `cop_is_licensed`                     | boolean | Whether user has M365 Copilot license  |
+| `cop_last_activity_date`              | date    | Last activity across any Copilot app   |
+| `cop_chat_count`                      | numeric | Microsoft 365 Chat (Business Chat) interactions |
+| `cop_teams_count`                     | numeric | Copilot in Teams actions (meeting recaps, channel summaries, etc.) |
+| `cop_word_count`                      | numeric | Copilot in Word actions (drafts, rewrites, summaries) |
+| `cop_excel_count`                     | numeric | Copilot in Excel actions (analysis, formulas, charts) |
+| `cop_powerpoint_count`                | numeric | Copilot in PowerPoint actions (slide generation, summaries) |
+| `cop_outlook_count`                   | numeric | Copilot in Outlook actions (email drafts, thread summaries) |
+| `cop_onenote_count`                   | numeric | Copilot in OneNote actions |
+| `cop_loop_count`                      | numeric | Copilot in Loop actions |
+
+**What feeds downstream:** Email and Teams fields → `communication_events`. OneDrive, SharePoint, and M365 Copilot fields are collected but not yet mapped to a unified stream — available for future use without re-fetching.
+
+---
+
+## Source 7: Zulip (Chat)
+
+**Why two tables:** Users and messages are a 1:N relationship. `zulip_users` is the identity anchor; `zulip_messages` holds aggregated counts. Could not be merged without repeating user metadata on every message record.
+
+---
+
+### `zulip_users` — User directory
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | bigint | Zulip user ID — primary key |
+| `email` | text | Email — used for cross-system identity resolution |
+| `full_name` | text | Display name |
+| `role` | numeric | 100 owner / 200 admin / 400 member / 600 guest |
+| `is_active` | boolean | Whether account is active |
+| `uuid` | text | Universally unique identifier |
+
+---
+
+### `zulip_messages` — Aggregated message counts per sender
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `sender_id` | bigint | Sender's Zulip user ID |
+| `count` | numeric | Number of messages in this record |
+| `created_at` | timestamptz | Message timestamp / aggregation period |
+
+Aggregated counts — individual message content is not collected.
+
+---
+
+## Source 8: Cursor (AI Dev Tool)
+
+**Why three tables:** `cursor_daily_usage` and `cursor_events` are different granularities — aggregated daily vs individual invocations. `cursor_events_token_usage` is 1:1 with `cursor_events` and could be merged into it, but is kept separate to match the API response structure and allow NULL-free storage when token data is absent.
+
+---
+
+### `cursor_daily_usage` — Daily aggregated usage per user
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `email` | text | User email |
+| `user_id` | text | Cursor platform user ID |
+| `date` | bigint | Unix timestamp in milliseconds |
+| `is_active` | boolean | Whether user had any activity this day |
+| `chat_requests` | numeric | AI chat interactions |
+| `cmdk_usages` | numeric | Cmd+K (inline edit) usages |
+| `composer_requests` | numeric | Composer feature requests |
+| `agent_requests` | numeric | Agent mode requests |
+| `bugbot_usages` | numeric | Bug bot usages |
+| `total_tabs_shown` | numeric | Tab completion suggestions shown |
+| `total_tabs_accepted` | numeric | Tab completions accepted |
+| `total_accepts` | numeric | All AI suggestions accepted |
+| `total_applies` | numeric | Code applications (apply to file) |
+| `total_rejects` | numeric | Suggestions rejected |
+| `total_lines_added` | numeric | Total lines of code added |
+| `total_lines_deleted` | numeric | Total lines deleted |
+| `accepted_lines_added` | numeric | Lines added from accepted AI suggestions |
+| `accepted_lines_deleted` | numeric | Lines deleted from accepted AI suggestions |
+| `most_used_model` | text | Most used AI model that day, e.g. `claude-3.5-sonnet` |
+| `tab_most_used_extension` | text | File extension with most tab completions |
+| `apply_most_used_extension` | text | File extension with most applies |
+| `client_version` | text | Cursor IDE version |
+| `subscription_included_reqs` | numeric | Requests covered by subscription |
+| `usage_based_reqs` | numeric | Requests on usage-based billing |
+| `api_key_reqs` | numeric | Requests using API key |
+
+---
+
+### `cursor_events` — Individual AI invocation events
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `user_email` | text | User email |
+| `timestamp` | timestamptz | Event timestamp |
+| `kind` | text | Event type: `chat`, `completion`, `agent`, `cmd-k`, etc. |
+| `model` | text | AI model used, e.g. `gpt-4o`, `claude-3.5-sonnet` |
+| `max_mode` | boolean | Whether max mode was enabled |
+| `is_chargeable` | boolean | Whether event incurs billing |
+| `requests_costs` | numeric | Request cost in credits |
+| `cursor_token_fee` | numeric | Cursor platform fee |
+| `is_token_based_call` | boolean | Billed by tokens vs per-request |
+| `is_headless` | boolean | Triggered without UI (automated) |
+
+---
+
+### `cursor_events_token_usage` — Token consumption per event (1:1 with cursor_events)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `event_unique` | text | Parent event reference |
+| `input_tokens` | numeric | Tokens in the prompt |
+| `output_tokens` | numeric | Tokens in the model response |
+| `cache_read_tokens` | numeric | Tokens served from prompt cache |
+| `cache_write_tokens` | numeric | Tokens written to cache |
+| `total_cents` | numeric | Total cost in cents |
+| `discount_percent_off` | numeric | Discount applied |
+
+All fields nullable — not all events have token-level detail.
+
+---
+
+## Source 9: Windsurf (AI Dev Tool)
+
+**Same logical model as Cursor** — daily aggregates + individual invocation events. Key differences: Windsurf's primary AI feature is **Cascade** (chat + agent in one surface, no separate "composer"); completions are called **Supercomplete** in addition to standard tab completions. Token usage is included inline in the events table (no separate 1:1 table).
+
+---
+
+### `windsurf_daily_usage` — Daily aggregated usage per user
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `email` | text | User email |
+| `user_id` | text | Windsurf / Codeium platform user ID |
+| `date` | date | Activity date |
+| `is_active` | boolean | Whether user had any activity this day |
+| `completions_shown` | numeric | AI completion suggestions shown |
+| `completions_accepted` | numeric | Suggestions accepted (tab) |
+| `supercomplete_shown` | numeric | Supercomplete suggestions shown |
+| `supercomplete_accepted` | numeric | Supercomplete suggestions accepted |
+| `lines_accepted` | numeric | Lines of code accepted from AI suggestions |
+| `cascade_chat_requests` | numeric | Cascade chat interactions |
+| `cascade_agent_requests` | numeric | Cascade agent (multi-step) interactions |
+| `cascade_write_actions` | numeric | File write operations performed by Cascade agent |
+| `most_used_model` | text | Most used AI model that day, e.g. `claude-3.5-sonnet` |
+| `client_version` | text | Windsurf IDE version |
+| `subscription_included_reqs` | numeric | Requests covered by subscription |
+| `usage_based_reqs` | numeric | Requests on usage-based billing |
+
+---
+
+### `windsurf_events` — Individual AI invocation events
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `user_email` | text | User email |
+| `event_id` | text | Unique event identifier |
+| `timestamp` | timestamptz | Event timestamp |
+| `kind` | text | Event type: `completion`, `supercomplete`, `cascade_chat`, `cascade_agent`, etc. |
+| `model` | text | AI model used, e.g. `claude-3.5-sonnet`, `gpt-4o` |
+| `is_chargeable` | boolean | Whether event incurs billing |
+| `request_cost` | numeric | Request cost in credits |
+| `is_token_based_call` | boolean | Billed by tokens vs per-request |
+| `input_tokens` | numeric | Tokens in the prompt (nullable) |
+| `output_tokens` | numeric | Tokens in the model response (nullable) |
+| `cache_read_tokens` | numeric | Tokens served from prompt cache (nullable) |
+| `total_cents` | numeric | Total cost in cents (nullable) |
+
+Token fields are nullable — not all events have token-level detail.
+
+---
+
+## Unified Stream 1: `communication_events`
+
+**Sources:** `m365_raw` (Email + Teams fields) + `zulip_messages`
+
+One row per user per day per channel type. OneDrive and SharePoint fields from `m365_raw` are not included — the stream covers only communication activity.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ingestion_date` | timestamp | When ingested — cursor for incremental downstream sync |
+| `source_id` | text | Composite key tracing to source record: `{source}:{id}:{channel}` |
+| `event_date` | date | Date the communication occurred |
+| `source` | text | `ms365_teams`, `ms365_email`, `zulip` |
+| `user_email` | text | Lowercase email — unified identity key |
+| `user_display_name` | text | Display name (where available) |
+| `channel` | text | Communication channel type |
+| `direction` | text | `outbound`, `inbound`, `engagement` |
+| `count` | numeric | Number of events |
+| `metadata` | jsonb | Source-specific extras (durations, urgentMessages, etc.) |
+
+**Channel mapping:**
+
+| source | channel | direction | Source field |
+|--------|---------|-----------|-------------|
+| `ms365_teams` | `chat_group` | outbound | `teams_chat_group_count` |
+| `ms365_teams` | `chat_private` | outbound | `teams_chat_private_count` |
+| `ms365_teams` | `channel_post` | outbound | `teams_channel_post_count` |
+| `ms365_teams` | `channel_reply` | outbound | `teams_channel_reply_count` |
+| `ms365_teams` | `call` | outbound | `teams_call_count` |
+| `ms365_teams` | `meeting` | engagement | `teams_meetings_attended` |
+| `ms365_email` | `email_sent` | outbound | `email_send_count` |
+| `ms365_email` | `email_received` | inbound | `email_receive_count` |
+| `ms365_email` | `email_read` | engagement | `email_read_count` |
+| `zulip` | `chat` | outbound | `zulip_messages.count` |
+
+> Total chat messages across platforms: `channel IN ('chat_group', 'chat_private', 'chat') AND direction = 'outbound'`. Channel posts/replies are content publishing, not messaging — exclude from message counts.
+
+---
+
+## Unified Stream 2: `class_task_tracker`
+
+**Sources:** YouTrack + Jira
+
+Reconstructs task lifecycle from field change history. One row per task, capturing key timestamps for each workflow phase.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `task_id` | text | Human-readable ID, e.g. `MON-123` |
+| `task_id_ref` | text | Source system internal ID |
+| `source` | text | `youtrack` or `jira` |
+| `created_at` | timestamp | Task creation |
+| `created_by_name` / `created_by_id` | text | Who created |
+| `started_at` | timestamp | When work began (NULL if not started) |
+| `started_by_name` / `started_by_id` | text | Who started |
+| `testing_started_at` | timestamp | When testing began (NULL if skipped) |
+| `testing_started_by_name` / `testing_started_by_id` | text | Who moved to testing |
+| `done_at` | timestamp | When completed (NULL if open) |
+| `done_by_name` / `done_by_id` | text | Who completed |
+| `ingestion_at` | timestamp | Ingestion timestamp — for incremental sync |
+| `deleted` | boolean | Soft delete flag |
+| `metadata` | jsonb | Source-specific fields |
+
+Tasks link to git commits via `task_id = git_commits.message` (extracted ticket pattern).
+
+---
+
+## Source 10: BambooHR (HR)
+
+**SMB-focused HR system.** Returns current-state records — no effective dating, no versioning. Simple REST API. Flat employee record with job title as a plain string; time-off categories are freeform.
+
+**Primary use in Insight:** identity resolution (canonical email + manager chain), org hierarchy for team-level aggregation, leave history for burnout risk signals.
+
+---
+
+### `bamboohr_employees` — Employee records
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `employee_id` | text | BambooHR internal numeric ID |
+| `email` | text | Work email — primary key for cross-system identity resolution |
+| `full_name` | text | Display name |
+| `first_name` | text | First name |
+| `last_name` | text | Last name |
+| `department` | text | Department name |
+| `department_id` | text | Department ID |
+| `job_title` | text | Job title (freeform string) |
+| `employment_type` | text | `Full-Time` / `Part-Time` / `Contractor` |
+| `status` | text | `Active` / `Terminated` |
+| `manager_id` | text | Manager's BambooHR employee ID |
+| `manager_email` | text | Manager's email — used to build org hierarchy |
+| `location` | text | Office location or `Remote` |
+| `hire_date` | date | Employment start date |
+| `termination_date` | date | Employment end date (NULL if active) |
+
+---
+
+### `bamboohr_departments` — Department hierarchy
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `department_id` | text | BambooHR department ID |
+| `name` | text | Department name |
+| `parent_department_id` | text | Parent department ID (NULL for root) |
+
+---
+
+### `bamboohr_leave_requests` — Time off requests
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `request_id` | text | BambooHR request ID |
+| `employee_id` | text | Employee's BambooHR ID |
+| `employee_email` | text | Employee email |
+| `leave_type` | text | `Vacation` / `Sick` / `Parental` / `Unpaid` / etc. (freeform) |
+| `start_date` | date | Leave start |
+| `end_date` | date | Leave end |
+| `duration_days` | numeric | Working days absent |
+| `status` | text | `approved` / `pending` / `cancelled` |
+| `created_at` | timestamptz | When the request was submitted |
+
+---
+
+## Source 11: Workday (HR)
+
+**Enterprise HCM.** Structurally different from BambooHR in several key ways:
+
+- **Effective dating** — records are point-in-time snapshots; org changes produce new versioned rows rather than overwriting the current state. This enables historical org structure queries.
+- **Worker type** — explicit distinction between `Employee` and `Contingent_Worker` (contractors, consultants).
+- **Positions** — a job slot (`position_id`) is a separate entity from the person filling it; one position can be vacant or change hands.
+- **Supervisory Organization** — the actual management hierarchy unit (`supervisory_org`), separate from cost center and department.
+
+---
+
+### `workday_workers` — Worker records (point-in-time)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `worker_id` | text | Workday internal worker ID |
+| `email` | text | Work email — primary key for cross-system identity resolution |
+| `full_name` | text | Display name |
+| `first_name` | text | First name |
+| `last_name` | text | Last name |
+| `worker_type` | text | `Employee` / `Contingent_Worker` |
+| `employment_status` | text | `Active` / `Terminated` / `Leave` |
+| `job_title` | text | Business title |
+| `job_profile` | text | Standardized job profile name |
+| `position_id` | text | Position (job slot) identifier |
+| `supervisory_org_id` | text | Supervisory organization ID — defines the reporting chain |
+| `supervisory_org_name` | text | Supervisory organization name |
+| `department` | text | Department name |
+| `cost_center_id` | text | Cost center ID |
+| `cost_center_name` | text | Cost center name |
+| `manager_id` | text | Manager's Workday worker ID |
+| `manager_email` | text | Manager's email |
+| `location` | text | Office or `Remote` |
+| `hire_date` | date | Employment start date |
+| `termination_date` | date | Employment end date (NULL if active) |
+| `effective_date` | date | Date from which this record version is valid |
+
+---
+
+### `workday_organizations` — Org units (departments, supervisory orgs, cost centers)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `org_id` | text | Workday org unit ID |
+| `org_type` | text | `Supervisory` / `Department` / `CostCenter` / `Company` |
+| `name` | text | Org unit name |
+| `parent_org_id` | text | Parent org unit ID (NULL for root) |
+| `head_worker_id` | text | Org head's Workday worker ID |
+| `effective_date` | date | Date from which this org version is valid |
+
+---
+
+### `workday_leave` — Leave of absence and time off
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `leave_id` | text | Workday leave request ID |
+| `worker_id` | text | Worker's Workday ID |
+| `worker_email` | text | Worker email |
+| `leave_category` | text | `Leave_of_Absence` / `Time_Off` |
+| `leave_type` | text | e.g. `Vacation`, `Sick`, `Parental`, `FMLA` (policy-defined) |
+| `start_date` | date | Leave start |
+| `end_date` | date | Leave end |
+| `duration_days` | numeric | Working days absent |
+| `status` | text | `Approved` / `Pending` / `Cancelled` |
+| `created_at` | timestamptz | When the request was submitted |
+
+---
+
+## Source 12: LDAP / Active Directory (Directory)
+
+**Different model from HR systems.** LDAP is a hierarchical directory protocol — the primary record is a distinguished name (`dn`), not a numeric employee ID. It is the authoritative source for account status (enabled/disabled), group membership, and manager relationships in Microsoft environments.
+
+**Primary use in Insight:** identity resolution (linking login accounts to email addresses), account lifecycle (join/leave detection via `account_disabled`), group membership for team segmentation.
+
+---
+
+### `ldap_users` — User account directory
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `dn` | text | Distinguished name — unique identifier, e.g. `CN=John Smith,OU=Engineering,DC=corp,DC=example,DC=com` |
+| `sam_account_name` | text | Windows login name (Active Directory) / `uid` in OpenLDAP |
+| `email` | text | `mail` attribute — primary key for cross-system identity resolution |
+| `full_name` | text | `cn` (common name) |
+| `first_name` | text | `givenName` |
+| `last_name` | text | `sn` (surname) |
+| `department` | text | `department` attribute |
+| `title` | text | `title` attribute |
+| `manager_dn` | text | `manager` attribute — DN of the manager's LDAP record |
+| `ou` | text | Organizational unit path |
+| `account_disabled` | boolean | Whether the account is disabled |
+| `last_logon` | timestamptz | Last successful login (Active Directory only) |
+| `created_at` | timestamptz | `whenCreated` — account provisioning date |
+| `updated_at` | timestamptz | `whenChanged` — last directory update |
+
+---
+
+### `ldap_group_members` — Group and OU membership
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `group_dn` | text | Distinguished name of the group |
+| `group_name` | text | `cn` of the group |
+| `group_type` | text | `security` / `distribution` / `ou` |
+| `member_dn` | text | DN of the member (user or nested group) |
+| `member_email` | text | Resolved email of the member (NULL for nested groups) |
+| `is_nested_group` | boolean | True if `member_dn` is itself a group |
+
+Group membership is many-to-many. A user in `Engineering > Backend` appears in both the sub-group and all parent groups. `is_nested_group` allows flattening the hierarchy downstream.
+
+---
+
+## Source 13: Claude API (AI Tool)
+
+**Direct Anthropic API usage** — tracks token consumption and costs for teams calling the Claude API programmatically (internal tooling, automations, AI-powered features). Different from Cursor/Windsurf: there is no IDE context, no completions model. The unit of analysis is an API request, not a developer session.
+
+**API source:** Anthropic Admin API (`/v1/usage`). Returns aggregated usage per time bucket, groupable by model and API key. Per-request detail is available only if the caller passes an `X-Anthropic-User-Id` header — otherwise `user_id` is NULL and usage is attributable only to the API key.
+
+**Two tables:** daily aggregates (from the usage API) + individual request events (requires per-request instrumentation with user context).
+
+---
+
+### `claude_api_daily_usage` — Daily token usage per API key per model
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `date` | date | Usage date |
+| `api_key_id` | text | API key identifier (name or last-4 alias from Anthropic Console) |
+| `model` | text | Model ID, e.g. `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5` |
+| `request_count` | numeric | Number of API requests |
+| `input_tokens` | numeric | Input tokens consumed |
+| `output_tokens` | numeric | Output tokens generated |
+| `cache_read_tokens` | numeric | Tokens served from prompt cache |
+| `cache_write_tokens` | numeric | Tokens written to prompt cache |
+| `total_cost_cents` | numeric | Total cost in cents |
+
+Granularity: one row per `(date, api_key_id, model)`. No user attribution at this level — user breakdown requires the events table.
+
+---
+
+### `claude_api_requests` — Individual API request events
+
+Available only when the caller passes `X-Anthropic-User-Id` in the request header. Without this header, requests are not recorded at this level — only in daily aggregates above.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `request_id` | text | Unique request ID from Anthropic response headers |
+| `timestamp` | timestamptz | Request timestamp |
+| `api_key_id` | text | API key used |
+| `user_id` | text | Value of `X-Anthropic-User-Id` header — maps to internal user identifier (nullable) |
+| `model` | text | Model ID |
+| `input_tokens` | numeric | Input tokens |
+| `output_tokens` | numeric | Output tokens |
+| `cache_read_tokens` | numeric | Cache read tokens |
+| `cache_write_tokens` | numeric | Cache write tokens |
+| `cost_cents` | numeric | Request cost in cents |
+| `stop_reason` | text | Why generation stopped: `end_turn` / `max_tokens` / `stop_sequence` / `tool_use` |
+| `application` | text | Internal application tag — identifies which product or service made the call (set by the caller) |
+
+`application` is a convention, not an Anthropic API field — callers must set it themselves (e.g. via `X-Anthropic-User-Id` or a custom header pattern).
+
+---
+
+## Source 14: Claude Team Plan (AI Tool)
+
+**Per-seat subscription** for claude.ai — covers usage through the web interface, mobile app, and **Claude Code** CLI. Fundamentally different from Source 13 (Claude API):
+
+| Aspect | Claude API (Source 13) | Claude Team (Source 14) |
+|--------|------------------------|-------------------------|
+| Billing | Pay-per-token | Fixed per-seat/month |
+| Access | `api.anthropic.com` | `claude.ai` + Claude Code |
+| Usage data | Token counts + costs | Token counts, no per-request cost (flat subscription) |
+| Clients | Programmatic only | `web`, `claude_code`, `mobile` |
+
+**Claude Code** appears in Team plan data as `client = 'claude_code'`. Its usage patterns differ significantly from web: larger contexts, longer sessions, tool-use heavy (`stop_reason = 'tool_use'`).
+
+**API source:** Anthropic Admin API — user management and usage endpoints for Team/Enterprise accounts.
+
+---
+
+### `claude_team_seats` — Seat assignment and status
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `user_id` | text | Anthropic platform user ID |
+| `email` | text | User email — primary key for cross-system identity resolution |
+| `role` | text | `owner` / `admin` / `member` |
+| `status` | text | `active` / `inactive` / `pending` |
+| `added_at` | timestamptz | When the seat was assigned |
+| `last_active_at` | timestamptz | Last recorded activity across all clients |
+
+---
+
+### `claude_team_activity` — Daily usage per user per model per client
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `user_id` | text | Anthropic platform user ID |
+| `email` | text | User email |
+| `date` | date | Activity date |
+| `client` | text | `web` / `claude_code` / `mobile` — which surface was used |
+| `model` | text | Model ID, e.g. `claude-opus-4-6`, `claude-sonnet-4-6` |
+| `message_count` | numeric | Number of messages / turns sent |
+| `conversation_count` | numeric | Number of distinct conversations or sessions |
+| `input_tokens` | numeric | Input tokens consumed |
+| `output_tokens` | numeric | Output tokens generated |
+| `cache_read_tokens` | numeric | Tokens served from prompt cache |
+| `cache_write_tokens` | numeric | Tokens written to prompt cache |
+| `tool_use_count` | numeric | Tool/function calls made (relevant for Claude Code agent sessions) |
+
+**`client = 'claude_code'` signals:** Claude Code sessions tend to have high `tool_use_count`, long multi-turn conversations, and large `cache_write_tokens` (system prompt + file context caching). These patterns distinguish developer AI tool usage from general knowledge work.
+
+No `cost_cents` field — under a Team subscription the per-token cost is not meaningful; the cost is the seat fee.
+
+---
+
+## Source 15: GitHub Copilot (AI Dev Tool)
+
+**Organisation-managed subscription** — Copilot Business ($19/user/month) or Copilot Enterprise ($39/user/month). Accessed via GitHub API (`/orgs/{org}/copilot/*`).
+
+**Key structural difference from Cursor/Windsurf:** The GitHub Copilot API does not expose per-user daily usage. It provides:
+- Per-seat last-activity info (`last_activity_at`, `last_activity_editor`)
+- Org-level daily aggregates with breakdown by **language × editor**
+
+No per-user token counts or per-user daily metrics exist in the standard API — only seat-level activity timestamps.
+
+**Three tables:** seats, org-level daily totals, and per-language/editor breakdown.
+
+---
+
+### `copilot_seats` — Seat assignment and last activity
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `user_login` | text | GitHub login of the seat holder |
+| `user_email` | text | Email (from linked GitHub account) — for identity resolution |
+| `plan_type` | text | `business` / `enterprise` |
+| `pending_cancellation_date` | date | If seat is scheduled for cancellation (NULL otherwise) |
+| `last_activity_at` | timestamptz | Last recorded Copilot activity across all editors |
+| `last_activity_editor` | text | Editor used in last activity, e.g. `vscode`, `jetbrains` |
+| `created_at` | timestamptz | When the seat was assigned |
+| `updated_at` | timestamptz | Last seat record update |
+
+---
+
+### `copilot_usage` — Org-level daily usage totals
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `date` | date | Usage date |
+| `total_suggestions_count` | numeric | Code completion suggestions shown |
+| `total_acceptances_count` | numeric | Suggestions accepted (tab) |
+| `total_lines_suggested` | numeric | Lines of code suggested |
+| `total_lines_accepted` | numeric | Lines of code accepted |
+| `total_active_users` | numeric | Users with at least one completion interaction |
+| `total_chat_turns` | numeric | Copilot Chat interactions (IDE + github.com) |
+| `total_chat_acceptances` | numeric | Code blocks accepted from chat |
+| `total_active_chat_users` | numeric | Users who used Copilot Chat |
+
+Org-level only — no per-user breakdown at this table.
+
+---
+
+### `copilot_usage_breakdown` — Daily breakdown by language and editor
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `date` | date | Usage date |
+| `language` | text | Programming language, e.g. `python`, `typescript`, `go` |
+| `editor` | text | Editor, e.g. `vscode`, `jetbrains`, `neovim`, `vim`, `xcode` |
+| `suggestions_count` | numeric | Suggestions shown for this language × editor |
+| `acceptances_count` | numeric | Suggestions accepted |
+| `lines_suggested` | numeric | Lines suggested |
+| `lines_accepted` | numeric | Lines accepted |
+| `active_users` | numeric | Active users for this language × editor combination |
+
+One row per `(date, language, editor)`. Enables analysis of adoption by editor and language coverage without per-user resolution.
+
+---
+
+## All Tables at a Glance
+
+| Source | Raw Tables | Notes |
+|--------|-----------|-------|
+| **GitHub** | `github_repositories`, `github_branches`, `github_commits`, `github_commit_files`, `github_pull_requests`, `github_pull_request_reviews`, `github_pull_request_comments`, `github_pull_request_commits`, `github_ticket_refs`, `github_collection_runs` | REST v3 + GraphQL v4; formal review states |
+| **Bitbucket** | `bitbucket_repositories`, `bitbucket_branches`, `bitbucket_commits`, `bitbucket_commit_files`, `bitbucket_pull_requests`, `bitbucket_pull_request_reviewers`, `bitbucket_pull_request_comments`, `bitbucket_pull_request_commits`, `bitbucket_ticket_refs`, `bitbucket_collection_runs` | REST v1/v2; uuid identity; comment severity field |
+| **GitLab** | same structure with `gitlab_` prefix + `gitlab_num_stat`, `gitlab_files`, `gitlab_mr_approvals` | Merge Requests; effective-dated file stats; approval model |
+| **YouTrack** | `youtrack_issue`, `youtrack_issue_history`, `youtrack_user` | Full field change history |
+| **Jira** | `jira_issue`, `jira_issue_history`, `jira_user` | Same model as YouTrack; changelog has explicit from/to values |
+| **M365** | `m365_raw` (one wide table) | 5 API endpoints joined by `user_principal_name + report_refresh_date`; incl. M365 Copilot (`cop_` prefix) |
+| **Zulip** | `zulip_messages`, `zulip_users` | Aggregated counts, no message content |
+| **Cursor** | `cursor_daily_usage`, `cursor_events`, `cursor_events_token_usage` | Daily aggregates + per-event detail |
+| **Windsurf** | `windsurf_daily_usage`, `windsurf_events` | Same model as Cursor; token usage inline in events table |
+| **BambooHR** | `bamboohr_employees`, `bamboohr_departments`, `bamboohr_leave_requests` | SMB HR; current-state records only |
+| **Workday** | `workday_workers`, `workday_organizations`, `workday_leave` | Enterprise HCM; effective-dated, worker_type, supervisory orgs |
+| **LDAP / AD** | `ldap_users`, `ldap_group_members` | Directory protocol; account status + group membership |
+| **Claude API** | `claude_api_daily_usage`, `claude_api_requests` | Anthropic Admin API; per-request user attribution requires `X-Anthropic-User-Id` header |
+| **Claude Team** | `claude_team_seats`, `claude_team_activity` | Per-seat subscription; covers web, mobile, Claude Code via `client` field |
+| **GitHub Copilot** | `copilot_seats`, `copilot_usage`, `copilot_usage_breakdown` | Org-level aggregates only; no per-user daily metrics in API |
+
+| Stream Table | Sources | Purpose |
+|-------------|---------|---------|
+| `communication_events` | M365 (Email + Teams) + Zulip | Cross-platform communication load |
+| `class_task_tracker` | YouTrack + Jira | Delivery metrics, cycle time |
+
+---
+
+## Not Yet Specified
+
+| Source                      | Class             | Status      |
+| --------------------------- | ----------------- | ----------- |
+| Allure                      | Quality / Testing | No spec yet |
+
+---
+
+*Based on insight-spec repository, Streams Proposal (PR #3) and GitHub/Bitbucket ETL Design (PR #1), February 2026. Jira raw table schema designed by analogy with YouTrack (same three-table model, Jira API field names).*
