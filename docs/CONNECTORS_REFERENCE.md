@@ -1,6 +1,6 @@
 # Connector Reference: Data Sources for Constructor Insight
 
-> Version 2.10 — February 2026
+> Version 2.11 — February 2026
 > Based on: insight-spec PR #3 (Streams Proposal), PR #1 (GitHub/Bitbucket ETL)
 
 ---
@@ -1009,6 +1009,350 @@ One row per `(date, language, editor)`. Enables analysis of adoption by editor a
 
 ---
 
+## Source 16: HubSpot (CRM)
+
+**Sales CRM** — tracks customer contacts, company accounts, deal pipeline, and sales activities. Primary use in Insight: linking commercial activity (deals, calls, meetings) to team members for workload and performance analytics.
+
+**API:** HubSpot REST API v3. Objects are modular — contacts, companies, deals, and activities are separate endpoints joined by associations.
+
+---
+
+### `hubspot_contacts` — Person records
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `contact_id` | text | HubSpot internal contact ID |
+| `email` | text | Primary email — identity resolution key |
+| `first_name` | text | First name |
+| `last_name` | text | Last name |
+| `job_title` | text | Job title |
+| `company_id` | text | Associated company ID |
+| `owner_id` | text | HubSpot owner (salesperson) ID |
+| `lifecycle_stage` | text | `subscriber` / `lead` / `opportunity` / `customer` / etc. |
+| `created_at` | timestamptz | Record creation |
+| `updated_at` | timestamptz | Last update — cursor for incremental sync |
+
+---
+
+### `hubspot_companies` — Company / account records
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `company_id` | text | HubSpot internal company ID |
+| `name` | text | Company name |
+| `domain` | text | Website domain |
+| `industry` | text | Industry classification |
+| `owner_id` | text | Account owner ID |
+| `created_at` | timestamptz | Record creation |
+| `updated_at` | timestamptz | Last update |
+
+---
+
+### `hubspot_deals` — Deal pipeline records
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `deal_id` | text | HubSpot internal deal ID |
+| `deal_name` | text | Deal name |
+| `pipeline` | text | Pipeline name |
+| `stage` | text | Current deal stage, e.g. `appointmentscheduled` / `closedwon` / `closedlost` |
+| `amount` | numeric | Deal amount |
+| `close_date` | date | Expected or actual close date |
+| `owner_id` | text | Deal owner (salesperson) ID |
+| `company_id` | text | Associated company |
+| `contact_id` | text | Associated primary contact |
+| `created_at` | timestamptz | Deal creation |
+| `updated_at` | timestamptz | Last update |
+
+---
+
+### `hubspot_activities` — Calls, emails, meetings, tasks
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `activity_id` | text | HubSpot engagement ID |
+| `activity_type` | text | `call` / `email` / `meeting` / `task` / `note` |
+| `owner_id` | text | Activity owner (who performed it) |
+| `contact_id` | text | Associated contact (nullable) |
+| `deal_id` | text | Associated deal (nullable) |
+| `timestamp` | timestamptz | When the activity occurred |
+| `duration_seconds` | numeric | Duration (calls and meetings) |
+| `outcome` | text | Call outcome or meeting status (source-specific values) |
+| `created_at` | timestamptz | Record creation |
+
+---
+
+### `hubspot_owners` — HubSpot user directory (salespeople)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `owner_id` | text | HubSpot owner ID |
+| `email` | text | Owner email — identity resolution key |
+| `first_name` | text | First name |
+| `last_name` | text | Last name |
+| `archived` | boolean | Whether the owner account is deactivated |
+
+---
+
+## Source 17: Salesforce (CRM)
+
+**Enterprise CRM.** Same logical domain as HubSpot (contacts, accounts, opportunities, activities, users) but enterprise-grade with a significantly different data model.
+
+**API:** Salesforce REST API + SOQL query language. Key structural differences from HubSpot:
+
+| Aspect | HubSpot | Salesforce |
+|--------|---------|-----------|
+| Companies | Companies | Accounts |
+| Deals | Deals | Opportunities |
+| Activities | Engagements (unified) | Tasks + Events (separate objects) |
+| User ID | `owner_id` (numeric) | `OwnerId` (18-char Salesforce ID) |
+| Custom fields | Portal properties | Custom `__c` fields (schema-driven) |
+| History | Separate history objects | `FieldHistory` tracking per object |
+
+---
+
+### `salesforce_contacts`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `contact_id` | text | Salesforce 18-char ID |
+| `email` | text | Primary email — identity resolution key |
+| `first_name` | text | First name |
+| `last_name` | text | Last name |
+| `title` | text | Job title |
+| `account_id` | text | Associated Account (company) ID |
+| `owner_id` | text | Record owner (salesperson) Salesforce ID |
+| `lead_source` | text | Lead origin |
+| `created_date` | timestamptz | Record creation |
+| `last_modified_date` | timestamptz | Last update — cursor for incremental sync |
+
+---
+
+### `salesforce_accounts` — Company / account records
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `account_id` | text | Salesforce 18-char ID |
+| `name` | text | Account name |
+| `website` | text | Website URL |
+| `industry` | text | Industry |
+| `type` | text | `Customer` / `Partner` / `Prospect` / etc. |
+| `owner_id` | text | Account owner ID |
+| `parent_account_id` | text | Parent account for hierarchies (NULL for root) |
+| `created_date` | timestamptz | Record creation |
+| `last_modified_date` | timestamptz | Last update |
+
+---
+
+### `salesforce_opportunities` — Deal pipeline records
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `opportunity_id` | text | Salesforce 18-char ID |
+| `name` | text | Opportunity name |
+| `stage_name` | text | Current stage, e.g. `Prospecting` / `Closed Won` / `Closed Lost` |
+| `amount` | numeric | Opportunity amount |
+| `close_date` | date | Expected or actual close date |
+| `probability` | numeric | Win probability (0–100) |
+| `owner_id` | text | Opportunity owner ID |
+| `account_id` | text | Associated account |
+| `lead_source` | text | Lead origin |
+| `is_closed` | boolean | Whether the opportunity is closed |
+| `is_won` | boolean | Whether the outcome was a win |
+| `created_date` | timestamptz | Record creation |
+| `last_modified_date` | timestamptz | Last update |
+
+---
+
+### `salesforce_activities` — Tasks and Events
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `activity_id` | text | Salesforce 18-char ID |
+| `activity_type` | text | `Task` / `Event` |
+| `subject` | text | Activity subject / title |
+| `owner_id` | text | Activity owner |
+| `who_id` | text | Contact or Lead associated |
+| `what_id` | text | Related object (Opportunity, Account, etc.) |
+| `activity_date` | date | Due date (Task) or start date (Event) |
+| `duration_minutes` | numeric | Duration in minutes (Events only) |
+| `status` | text | Task status: `Not Started` / `Completed` / etc. |
+| `call_type` | text | `Inbound` / `Outbound` (calls only) |
+| `call_duration_seconds` | numeric | Call duration (calls only) |
+| `created_date` | timestamptz | Record creation |
+
+---
+
+### `salesforce_users` — User directory
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `user_id` | text | Salesforce 18-char user ID |
+| `email` | text | Email — identity resolution key |
+| `first_name` | text | First name |
+| `last_name` | text | Last name |
+| `title` | text | Job title |
+| `department` | text | Department |
+| `profile` | text | Salesforce profile (permission level) |
+| `is_active` | boolean | Whether the user account is active |
+
+---
+
+## Source 18: OpenAI API (AI Tool)
+
+**Direct OpenAI API usage** — tracks token consumption and costs for teams calling the OpenAI API programmatically. Same model as Source 13 (Claude API): daily aggregates + per-request events.
+
+**API:** OpenAI Usage API (`/v1/usage`). Returns aggregated usage per day, groupable by model and API key.
+
+---
+
+### `openai_api_daily_usage` — Daily token usage per API key per model
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `date` | date | Usage date |
+| `api_key_id` | text | API key identifier (name or last-4 alias) |
+| `model` | text | Model ID, e.g. `gpt-4o`, `gpt-4o-mini`, `o1`, `o3-mini` |
+| `request_count` | numeric | Number of API requests |
+| `input_tokens` | numeric | Input (prompt) tokens consumed |
+| `output_tokens` | numeric | Output (completion) tokens generated |
+| `cached_tokens` | numeric | Tokens served from prompt cache |
+| `reasoning_tokens` | numeric | Internal reasoning tokens (o1/o3 models only; billed but not in output) |
+| `total_cost_cents` | numeric | Total cost in cents |
+
+`reasoning_tokens` is specific to OpenAI's reasoning models (`o1`, `o3`) — they consume tokens internally before producing a response; these are billed but not visible in output.
+
+---
+
+### `openai_api_requests` — Individual API request events
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `request_id` | text | Unique request ID from response headers |
+| `timestamp` | timestamptz | Request timestamp |
+| `api_key_id` | text | API key used |
+| `user_id` | text | Value of `user` field in the request body — caller-defined identifier (nullable) |
+| `model` | text | Model ID |
+| `input_tokens` | numeric | Input tokens |
+| `output_tokens` | numeric | Output tokens |
+| `cached_tokens` | numeric | Cached tokens |
+| `reasoning_tokens` | numeric | Reasoning tokens (o1/o3 only, nullable) |
+| `cost_cents` | numeric | Request cost in cents |
+| `finish_reason` | text | Why generation stopped: `stop` / `length` / `tool_calls` / `content_filter` |
+| `application` | text | Internal application tag (caller-set convention) |
+
+---
+
+## Source 19: ChatGPT Team (AI Tool)
+
+**Per-seat subscription** for chatgpt.com — covers ChatGPT Team ($25/user/month) and ChatGPT Enterprise. Same two-table model as Source 14 (Claude Team): seats + daily activity.
+
+| Aspect | OpenAI API (Source 18) | ChatGPT Team (Source 19) |
+|--------|------------------------|--------------------------|
+| Billing | Pay-per-token | Fixed per-seat/month |
+| Access | `api.openai.com` | `chatgpt.com` + desktop app |
+| Clients | Programmatic only | `web`, `desktop`, `mobile` |
+
+**API source:** OpenAI Admin API — workspace user management and usage reports for Team/Enterprise accounts.
+
+---
+
+### `chatgpt_team_seats`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `user_id` | text | OpenAI platform user ID |
+| `email` | text | User email — identity resolution key |
+| `role` | text | `owner` / `admin` / `member` |
+| `status` | text | `active` / `inactive` / `pending` |
+| `added_at` | timestamptz | When the seat was assigned |
+| `last_active_at` | timestamptz | Last recorded activity |
+
+---
+
+### `chatgpt_team_activity` — Daily usage per user per model
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `user_id` | text | OpenAI platform user ID |
+| `email` | text | User email |
+| `date` | date | Activity date |
+| `client` | text | `web` / `desktop` / `mobile` |
+| `model` | text | Model used, e.g. `gpt-4o`, `o1`, `o3-mini` |
+| `conversation_count` | numeric | Number of distinct conversations |
+| `message_count` | numeric | Messages sent |
+| `input_tokens` | numeric | Input tokens consumed |
+| `output_tokens` | numeric | Output tokens generated |
+| `reasoning_tokens` | numeric | Reasoning tokens (o1/o3 models only) |
+
+No `cost_cents` — flat subscription.
+
+---
+
+## Source 20: Allure TestOps (Quality / Testing)
+
+**Test management and reporting platform.** Tracks test launches (CI/CD runs), individual test results, and defects linked to failures. Primary use in Insight: delivery quality metrics — pass rates, flaky tests, defect accumulation trends linked to commit and sprint activity.
+
+**API:** Allure TestOps REST API. Key entities: Projects → Launches → Test Results → Defects.
+
+---
+
+### `allure_launches` — Test run / launch records
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `launch_id` | bigint | Allure internal launch ID |
+| `project_id` | bigint | Project this launch belongs to |
+| `name` | text | Launch name, e.g. `Regression Suite - main` |
+| `status` | text | `passed` / `failed` / `broken` / `unknown` |
+| `created_date` | timestamptz | Launch start time |
+| `closed_date` | timestamptz | Launch end time (NULL if running) |
+| `duration_seconds` | numeric | Total run duration |
+| `passed_count` | numeric | Tests passed |
+| `failed_count` | numeric | Tests failed |
+| `broken_count` | numeric | Tests broken (infrastructure/setup failures) |
+| `skipped_count` | numeric | Tests skipped |
+| `total_count` | numeric | Total tests in launch |
+| `tags` | jsonb | Launch tags (environment, branch, build number, etc.) |
+
+---
+
+### `allure_test_results` — Individual test case results
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `result_id` | bigint | Allure test result ID |
+| `launch_id` | bigint | Parent launch |
+| `test_case_id` | bigint | Test case definition ID (stable across runs) |
+| `test_name` | text | Test case name |
+| `full_path` | text | Suite / class / method path |
+| `status` | text | `passed` / `failed` / `broken` / `skipped` |
+| `duration_seconds` | numeric | Test execution duration |
+| `start_time` | timestamptz | Test start |
+| `stop_time` | timestamptz | Test stop |
+| `flaky` | boolean | Marked as flaky (inconsistent results across runs) |
+| `message` | text | Failure message (NULL if passed) |
+| `trace` | text | Stack trace (NULL if passed) |
+
+---
+
+### `allure_defects` — Defects linked to test failures
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `defect_id` | bigint | Allure defect ID |
+| `project_id` | bigint | Project |
+| `name` | text | Defect name / title |
+| `status` | text | `open` / `resolved` |
+| `created_date` | timestamptz | When the defect was first detected |
+| `closed_date` | timestamptz | When resolved (NULL if open) |
+| `external_issue_id` | text | Linked ticket in YouTrack / Jira (e.g. `PROJ-123`) |
+| `result_count` | numeric | Number of test results linked to this defect |
+
+`external_issue_id` enables joining Allure defects with `class_task_tracker` — linking quality failures to delivery timeline.
+
+---
+
 ## All Tables at a Glance
 
 | Source | Raw Tables | Notes |
@@ -1028,19 +1372,16 @@ One row per `(date, language, editor)`. Enables analysis of adoption by editor a
 | **Claude API** | `claude_api_daily_usage`, `claude_api_requests` | Anthropic Admin API; per-request user attribution requires `X-Anthropic-User-Id` header |
 | **Claude Team** | `claude_team_seats`, `claude_team_activity` | Per-seat subscription; covers web, mobile, Claude Code via `client` field |
 | **GitHub Copilot** | `copilot_seats`, `copilot_usage`, `copilot_usage_breakdown` | Org-level aggregates only; no per-user daily metrics in API |
+| **HubSpot** | `hubspot_contacts`, `hubspot_companies`, `hubspot_deals`, `hubspot_activities`, `hubspot_owners` | CRM; contacts + pipeline + sales activities |
+| **Salesforce** | `salesforce_contacts`, `salesforce_accounts`, `salesforce_opportunities`, `salesforce_activities`, `salesforce_users` | Enterprise CRM; Tasks + Events separate; 18-char IDs |
+| **OpenAI API** | `openai_api_daily_usage`, `openai_api_requests` | Pay-per-token; `reasoning_tokens` for o1/o3 models |
+| **ChatGPT Team** | `chatgpt_team_seats`, `chatgpt_team_activity` | Per-seat subscription; web + desktop + mobile |
+| **Allure TestOps** | `allure_launches`, `allure_test_results`, `allure_defects` | Test runs + per-test results + defects linked to external tickets |
 
 | Stream Table | Sources | Purpose |
 |-------------|---------|---------|
 | `communication_events` | M365 (Email + Teams) + Zulip | Cross-platform communication load |
 | `class_task_tracker` | YouTrack + Jira | Delivery metrics, cycle time |
-
----
-
-## Not Yet Specified
-
-| Source                      | Class             | Status      |
-| --------------------------- | ----------------- | ----------- |
-| Allure                      | Quality / Testing | No spec yet |
 
 ---
 
