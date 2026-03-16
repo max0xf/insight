@@ -803,7 +803,7 @@ When a repository is mirrored across GitHub and Bitbucket, the same `commit_hash
 
 **Question**: Which approach best serves analytics needs?
 
-**Consideration**: Different sources may have different metadata quality (e.g., GitHub has better language detection). Keeping both records allows choosing best metadata at Gold layer.
+**Consideration**: Different sources may have different metadata quality (e.g., GitHub has better language detection). Keeping both records allows choosing best metadata at Silver layer.
 
 ---
 
