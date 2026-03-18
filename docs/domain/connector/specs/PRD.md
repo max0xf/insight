@@ -43,7 +43,7 @@
 
 ### 1.1 Purpose
 
-The Connector Framework is the data ingestion subsystem of Insight. It enables the platform to collect raw data from external source systems — version control, task tracking, HR directories, communication tools, AI development tools, CRM, and quality/testing — and deliver it through the Medallion Architecture (Bronze → Silver → Gold) for analytics consumption.
+The Connector Framework is the data ingestion subsystem of the Insight platform. It enables the platform to collect raw data from external source systems — version control, task tracking, HR directories, communication tools, AI development tools, CRM, and quality/testing — and deliver it through the Medallion Architecture (Bronze → Silver → Gold) for analytics consumption.
 
 The framework separates two fundamentally different concerns: structural integration mechanics (authentication, pagination, rate limiting, error recovery) that are identical across all sources, and semantic mapping (cross-source unification, enum normalization, identity resolution rules) that requires human authorship per domain.
 
@@ -80,7 +80,7 @@ Organizations typically use 5–15+ SaaS tools across development, HR, communica
 | Connector | A configured integration with a specific external data source instance, responsible for extracting data and delivering it to the Bronze layer |
 | Source Instance | A single deployment of an external system, e.g., a company's Jira Cloud, a team's GitHub organization. Identified by a stable `source_instance_id` |
 | Bronze Layer | The raw data layer in the Medallion Architecture. Stores collected data preserving source-native schema and identifiers. One set of tables per source |
-| Silver Layer | The unified data layer. Cross-source normalized data with canonical `class_{domain}` schemas. Produced in two steps: (1) schema unification, (2) identity resolution |
+| Silver Layer | The unified data layer. Cross-source normalized data with canonical `class_{domain}` schemas. Silver tables retain source-native user identifiers; identity resolution is not applied at this layer but Silver records can be joined with the Identity Manager's `person_id` mapping at query time or in Gold |
 | Gold Layer | The derived metrics layer. Pre-aggregated analytics consuming exclusively from Silver tables. Domain-specific names, no raw events |
 | Medallion Architecture | The Bronze → Silver → Gold data pipeline pattern used by the platform |
 | Connector Author | A person developing a new connector — may be a platform engineer (first-party), open-source contributor (community), or customer (self-service) |
@@ -143,7 +143,7 @@ Organizations typically use 5–15+ SaaS tools across development, HR, communica
 
 **ID**: `cpt-insightspec-actor-cn-identity-manager`
 
-**Role**: Part of Insight service that resolves source-native user identifiers to canonical `person_id` during Silver step 2. Maintained as a separate domain (see `docs/domain/identity-resolution/`).
+**Role**: Internal Insight platform service that maintains a canonical `person_id` registry by mapping source-native user identifiers (emails, logins, employee IDs) to a single person identity. Silver tables are NOT enriched by the Identity Manager — they retain source-native user IDs. The `person_id` mapping is available for joining at query time or in Gold layer aggregations. Maintained as a separate domain (see `docs/domain/identity-resolution/`).
 
 ## 3. Operational Concept & Environment
 
@@ -186,7 +186,7 @@ These projections inform capacity planning in the DESIGN phase. The framework MU
 ### 4.2 Out of Scope
 
 - Connector orchestration and scheduling (separate domain: `docs/components/connectors-orchestrator/`)
-- Identity Manager internals and person resolution logic (separate domain: `docs/domain/identity-resolution/`)
+- Identity Manager internals and person resolution logic (separate Insight platform domain: `docs/domain/identity-resolution/`)
 - Gold layer metric definitions and aggregations (downstream consumer of Silver data)
 - Dashboard and visualization layer
 - Individual connector specifications (each connector has its own PRD/DESIGN)
@@ -327,7 +327,7 @@ Data from multiple sources of the same domain (e.g., GitHub + Bitbucket + GitLab
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-cn-data-lineage`
 
-Every record in a Silver `class_{domain}` table MUST retain a traceable reference to the originating Bronze record (source type, source instance, and Bronze primary key). This lineage link MUST allow navigating from any unified Silver record back to the exact raw Bronze row it was derived from. The lineage MUST be preserved through both Silver step 1 (unification) and Silver step 2 (identity resolution). When a Silver record is derived from multiple Bronze records (e.g., merge or deduplication), all contributing Bronze references MUST be retained.
+Every record in a Silver `class_{domain}` table MUST retain a traceable reference to the originating Bronze record (source type, source instance, and Bronze primary key). This lineage link MUST allow navigating from any unified Silver record back to the exact raw Bronze row it was derived from. The lineage MUST be preserved through the Silver unification process. When a Silver record is derived from multiple Bronze records (e.g., merge or deduplication), all contributing Bronze references MUST be retained.
 
 **Rationale**: Without explicit lineage, debugging data quality issues in Gold/Silver requires guesswork about which source and which raw record produced the anomaly. Lineage is also a prerequisite for the quarantine re-processing flow and for auditing the unification logic when Silver mappings are disputed.
 
@@ -441,7 +441,7 @@ Bronze data containing PII fields MUST be subject to a configurable retention po
 
 - [ ] `p2` - **ID**: `cpt-insightspec-fr-cn-data-subject-access`
 
-The system MUST support identifying all Bronze records containing PII for a specific individual, to enable data subject access requests (GDPR Article 15). The identification MUST work across all connectors that collect PII for the given individual, using source-native identifiers and (where available) the canonical `person_id` from the Identity Manager.
+The system MUST support identifying all Bronze records containing PII for a specific individual, to enable data subject access requests (GDPR Article 15). The identification MUST work across all connectors that collect PII for the given individual, using source-native identifiers and (where available) the canonical `person_id` mapping provided by the Identity Manager.
 
 **Rationale**: GDPR Article 15 requires data controllers to provide individuals with access to their personal data. The connector framework must support this across all sources.
 
@@ -709,7 +709,7 @@ Every connector instance MUST expose a health check endpoint indicating its oper
 | Dependency | Description | Criticality |
 |------------|-------------|-------------|
 | Connector Orchestrator | Schedules and triggers connector execution runs (see `docs/components/connectors-orchestrator/specs/PRD.md`) | p1 |
-| Identity Manager | Resolves source-native user IDs to canonical `person_id` for Silver step 2 (see `docs/domain/identity-resolution/`) | p1 |
+| Identity Manager | Internal Insight platform service providing `person_id` mapping for source-native user IDs; Silver data can be joined with this mapping at query time or in Gold (see `docs/domain/identity-resolution/`) | p2 |
 | Source System APIs | External SaaS APIs providing data; availability and rate limits vary per source | p1 |
 | Credential/Secrets Management | Secure storage and retrieval of source API credentials per workspace | p1 |
 | Data Catalog / Semantic Dictionary | Downstream consumer of semantic metadata from Silver field definitions | p2 |
@@ -721,7 +721,7 @@ Every connector instance MUST expose a health check endpoint indicating its oper
 - Source APIs support some form of incremental data retrieval (timestamp-based, cursor-based, or event-based)
 - Workspace admins are responsible for providing valid credentials for their source instances
 - The Medallion Architecture (Bronze → Silver → Gold) is the established data pipeline pattern and will not change during v1.0
-- Identity resolution is handled by the Identity Manager service — connectors provide source-native user identifiers but do not resolve identities themselves
+- Identity resolution is handled by the Identity Manager (a separate Insight platform service) — connectors provide source-native user identifiers; Silver tables retain these source-native IDs and are NOT enriched with `person_id`; the mapping is available for joining at query time or in Gold
 - Each workspace may have multiple instances of the same source type (e.g., two Jira instances)
 - Customers deploying HR connectors are aware that employee PII will be collected and have obtained necessary consent or legal basis
 - The platform operates as a data processor (GDPR Article 28) — customers (data controllers) are responsible for legal basis of collection; the framework provides the technical mechanisms for retention, deletion, and access
