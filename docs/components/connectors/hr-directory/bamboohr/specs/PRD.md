@@ -98,7 +98,7 @@ BambooHR returns **current-state records only** — no effective dating or versi
 
 - [ ] `p1` - **ID**: `cpt-insightspec-actor-bhr-identity-manager`
 
-**Identity Manager** — consumes `workEmail` from `bamboohr_employees` to maintain the canonical `person_id` mapping used by all Silver streams.
+**Identity Manager** — consumes `workEmail` from `employees` to maintain the canonical `person_id` mapping used by all Silver streams.
 
 - [ ] `p1` - **ID**: `cpt-insightspec-actor-bhr-destination`
 
@@ -181,9 +181,9 @@ The system **MUST** extract field metadata from `GET /meta/fields`, collecting f
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-bhr-deduplication`
 
 The system **MUST** define primary keys for each stream to enable deduplication at the destination:
-- `bamboohr_employees`: `id` (BambooHR employee ID)
-- `bamboohr_leave_requests`: `id` (BambooHR request ID)
-- `bamboohr_meta_fields`: `id` (BambooHR field ID)
+- `employees`: `id` (BambooHR employee ID)
+- `leave_requests`: `id` (BambooHR request ID)
+- `meta_fields`: `id` (BambooHR field ID)
 
 **Rationale**: Primary keys enable the destination to perform upsert operations, preventing duplicate records across collection runs.
 
@@ -326,10 +326,10 @@ Not applicable. The BambooHR connector is a declarative manifest (YAML) executed
 
 **UC-3: Identity Manager Feed**
 
-**Trigger**: Fresh employee records land in `bamboohr_employees` Bronze table.
+**Trigger**: Fresh employee records land in `employees` Bronze table.
 
 **Flow**:
-1. Identity Manager reads new/updated employee records from `bamboohr_employees`.
+1. Identity Manager reads new/updated employee records from `employees`.
 2. For each record, resolves `workEmail` to canonical `person_id`.
 3. Updates the identity mapping table.
 
@@ -392,7 +392,7 @@ BambooHR returns only current-state records. When a person moves departments, th
 
 ### OQ-BHR-2: Leave type normalisation across HR systems
 
-`bamboohr_leave_requests` leave types are freeform and client-configured. Normalisation to a canonical enum (`vacation` / `sick` / `parental` / `other`) is a Silver/Gold concern.
+`leave_requests` leave types are freeform and client-configured. Normalisation to a canonical enum (`vacation` / `sick` / `parental` / `other`) is a Silver/Gold concern.
 
 - Should the connector extract leave type metadata (policy names, categories) to assist Silver normalisation?
 - Or is raw leave type sufficient for Bronze?

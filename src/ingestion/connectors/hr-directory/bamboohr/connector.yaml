@@ -54,7 +54,7 @@ definitions:
 
   employees_stream:
     type: DeclarativeStream
-    name: "bamboohr_employees"
+    name: "employees"
     primary_key: "id"
     retriever:
       type: SimpleRetriever
@@ -219,7 +219,7 @@ definitions:
 
   leave_requests_stream:
     type: DeclarativeStream
-    name: "bamboohr_leave_requests"
+    name: "leave_requests"
     primary_key: "id"
     retriever:
       type: SimpleRetriever
@@ -346,7 +346,7 @@ definitions:
 
   meta_fields_stream:
     type: DeclarativeStream
-    name: "bamboohr_meta_fields"
+    name: "meta_fields"
     primary_key: "unique"
     retriever:
       type: SimpleRetriever
@@ -410,7 +410,7 @@ definitions:
 
   meta_tables_stream:
     type: DeclarativeStream
-    name: "bamboohr_meta_tables"
+    name: "meta_tables"
     primary_key: "alias"
     retriever:
       type: SimpleRetriever
@@ -467,7 +467,7 @@ definitions:
 
   meta_lists_stream:
     type: DeclarativeStream
-    name: "bamboohr_meta_lists"
+    name: "meta_lists"
     retriever:
       type: SimpleRetriever
       requester:
@@ -514,7 +514,7 @@ streams:
 check:
   type: CheckStream
   stream_names:
-    - "bamboohr_meta_fields"
+    - "meta_fields"
 
 spec:
   type: Spec

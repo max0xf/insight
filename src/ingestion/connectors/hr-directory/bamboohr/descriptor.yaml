@@ -9,18 +9,18 @@ silver_targets:
 
 # Stream definitions mapping to Bronze tables
 streams:
-  - name: bamboohr_employees
-    bronze_table: bamboohr_employees
+  - name: employees
+    bronze_table: employees
     primary_key: [id]
     cursor_field: lastChanged
-  - name: bamboohr_leave_requests
-    bronze_table: bamboohr_leave_requests
+  - name: leave_requests
+    bronze_table: leave_requests
     primary_key: [id]
-  - name: bamboohr_meta_fields
-    bronze_table: bamboohr_meta_fields
+  - name: meta_fields
+    bronze_table: meta_fields
     primary_key: [unique]
-  - name: bamboohr_meta_tables
-    bronze_table: bamboohr_meta_tables
+  - name: meta_tables
+    bronze_table: meta_tables
     primary_key: [alias]
-  - name: bamboohr_meta_lists
-    bronze_table: bamboohr_meta_lists
+  - name: meta_lists
+    bronze_table: meta_lists

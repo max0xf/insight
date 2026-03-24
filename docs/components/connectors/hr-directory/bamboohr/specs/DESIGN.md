@@ -37,11 +37,11 @@
 
 The BambooHR connector is an Airbyte declarative manifest connector (YAML, no custom code) that extracts HR directory data from the BambooHR REST API v1. It produces three Bronze streams:
 
-1. **`bamboohr_employees`** — employee directory via the custom report endpoint (`POST /reports/custom`), collecting insights-relevant fields only.
-2. **`bamboohr_leave_requests`** — time-off requests via `GET /time_off/requests` with fixed date range.
-3. **`bamboohr_meta_fields`** — field metadata (standard + custom field definitions) via `GET /meta/fields`.
-4. **`bamboohr_meta_tables`** — table metadata via `GET /meta/tables`.
-5. **`bamboohr_meta_lists`** — list field values (departments, statuses, etc.) via `GET /meta/lists`.
+1. **`employees`** — employee directory via the custom report endpoint (`POST /reports/custom`), collecting insights-relevant fields only.
+2. **`leave_requests`** — time-off requests via `GET /time_off/requests` with fixed date range.
+3. **`meta_fields`** — field metadata (standard + custom field definitions) via `GET /meta/fields`.
+4. **`meta_tables`** — table metadata via `GET /meta/tables`.
+5. **`meta_lists`** — list field values (departments, statuses, etc.) via `GET /meta/lists`.
 
 **Authentication**: API key injected as `Authorization: Basic {base64(key:x)}` header via `ApiKeyAuthenticator`.
 
@@ -57,9 +57,9 @@ The BambooHR connector is an Airbyte declarative manifest connector (YAML, no cu
 
 | Requirement | Design Response |
 |-------------|-----------------|
-| `cpt-insightspec-fr-bhr-collect-employees` | Stream `bamboohr_employees` → `POST /reports/custom?format=JSON&onlyCurrent=true` |
-| `cpt-insightspec-fr-bhr-collect-leave-requests` | Stream `bamboohr_leave_requests` → `GET /time_off/requests?start={start}&end={end}` |
-| `cpt-insightspec-fr-bhr-collect-meta-fields` | Stream `bamboohr_meta_fields` → `GET /meta/fields` |
+| `cpt-insightspec-fr-bhr-collect-employees` | Stream `employees` → `POST /reports/custom?format=JSON&onlyCurrent=true` |
+| `cpt-insightspec-fr-bhr-collect-leave-requests` | Stream `leave_requests` → `GET /time_off/requests?start={start}&end={end}` |
+| `cpt-insightspec-fr-bhr-collect-meta-fields` | Stream `meta_fields` → `GET /meta/fields` |
 | `cpt-insightspec-fr-bhr-deduplication` | Primary keys: `id` (employees, leave requests, meta fields) |
 | `cpt-insightspec-fr-bhr-identity-key` | `workEmail` field included in employee custom report field list |
 | `cpt-insightspec-fr-bhr-incremental-sync` | Full refresh on all streams; `lastChanged` retained for future incremental |
@@ -139,11 +139,11 @@ All streams use full refresh sync. The custom report endpoint does not support s
 
 | Entity | API Source | Bronze Stream | Description |
 |--------|-----------|--------------|-------------|
-| Employee | `POST /reports/custom` | `bamboohr_employees` | Current-state employee record with insights-relevant HR attributes |
-| Leave Request | `GET /time_off/requests` | `bamboohr_leave_requests` | Time-off request with dates, type, status, and amount |
-| Field Metadata | `GET /meta/fields` | `bamboohr_meta_fields` | Field definitions (standard + custom) for schema discovery |
-| Table Metadata | `GET /meta/tables` | `bamboohr_meta_tables` | Tabular data definitions (job info, compensation, etc.) |
-| List Values | `GET /meta/lists` | `bamboohr_meta_lists` | List field values (departments, statuses, locations, etc.) |
+| Employee | `POST /reports/custom` | `employees` | Current-state employee record with insights-relevant HR attributes |
+| Leave Request | `GET /time_off/requests` | `leave_requests` | Time-off request with dates, type, status, and amount |
+| Field Metadata | `GET /meta/fields` | `meta_fields` | Field definitions (standard + custom) for schema discovery |
+| Table Metadata | `GET /meta/tables` | `meta_tables` | Tabular data definitions (job info, compensation, etc.) |
+| List Values | `GET /meta/lists` | `meta_lists` | List field values (departments, statuses, locations, etc.) |
 
 **Relationships**:
 - Employee `1:N` Leave Request (via `employeeId`)
@@ -274,7 +274,7 @@ Does not handle orchestration, scheduling, or state storage (managed by Airbyte/
 
 | Dependency Module | Interface Used | Purpose |
 |-------------------|---------------|---------|
-| Identity Manager | Downstream consumer | Reads `workEmail` from `bamboohr_employees` Bronze table for person resolution |
+| Identity Manager | Downstream consumer | Reads `workEmail` from `employees` Bronze table for person resolution |
 | HR Silver ETL Job | Downstream consumer | Reads all Bronze streams to produce `class_people` and `class_org_units` |
 
 ### 3.5 External Dependencies
@@ -327,7 +327,7 @@ sequenceDiagram
 
 ### 3.7 Database schemas & tables
 
-#### Table: `bamboohr_employees`
+#### Table: `employees`
 
 - [ ] `p1` - **ID**: `cpt-insightspec-dbtable-bhr-employees`
 
@@ -362,7 +362,7 @@ sequenceDiagram
 
 ---
 
-#### Table: `bamboohr_leave_requests`
+#### Table: `leave_requests`
 
 - [ ] `p1` - **ID**: `cpt-insightspec-dbtable-bhr-leave-requests`
 
@@ -385,7 +385,7 @@ sequenceDiagram
 
 ---
 
-#### Table: `bamboohr_meta_fields`
+#### Table: `meta_fields`
 
 - [ ] `p2` - **ID**: `cpt-insightspec-dbtable-bhr-meta-fields`
 
@@ -412,9 +412,9 @@ sequenceDiagram
 | `started_at` | DateTime | Run start time |
 | `completed_at` | DateTime | Run end time |
 | `status` | String | `running` / `completed` / `failed` |
-| `employees_collected` | Number | Records collected for `bamboohr_employees` |
-| `leave_requests_collected` | Number | Records collected for `bamboohr_leave_requests` |
-| `meta_fields_collected` | Number | Records collected for `bamboohr_meta_fields` |
+| `employees_collected` | Number | Records collected for `employees` |
+| `leave_requests_collected` | Number | Records collected for `leave_requests` |
+| `meta_fields_collected` | Number | Records collected for `meta_fields` |
 | `api_calls` | Number | API calls made |
 | `errors` | Number | Errors encountered |
 | `settings` | String (JSON) | Collection configuration |
@@ -448,7 +448,7 @@ Connection: bamboohr-{domain}
 
 ### Identity Resolution Strategy
 
-`workEmail` from `bamboohr_employees` is the primary identity signal. The Identity Manager maps it to the canonical `person_id` used across all Silver streams. `supervisorEmail` enables org hierarchy construction without requiring `person_id` resolution of managers first.
+`workEmail` from `employees` is the primary identity signal. The Identity Manager maps it to the canonical `person_id` used across all Silver streams. `supervisorEmail` enables org hierarchy construction without requiring `person_id` resolution of managers first.
 
 BambooHR `id` and `supervisorEId` are BambooHR-internal identifiers — retained for lineage but not used as cross-system join keys.
 
@@ -456,11 +456,11 @@ BambooHR `id` and `supervisorEId` are BambooHR-internal identifiers — retained
 
 | Bronze table | Silver target | Status |
 |-------------|--------------|--------|
-| `bamboohr_employees` | Identity Manager (`workEmail` → `person_id`) | Direct feed |
-| `bamboohr_employees` | `class_people` | Via HR Silver ETL Job |
-| `bamboohr_employees` | `class_org_units` | Department data extracted for org hierarchy |
-| `bamboohr_leave_requests` | `class_people` | Leave periods captured as status transitions in SCD2 |
-| `bamboohr_meta_fields` | Custom Attributes Normalizer | Field metadata for custom attribute mapping |
+| `employees` | Identity Manager (`workEmail` → `person_id`) | Direct feed |
+| `employees` | `class_people` | Via HR Silver ETL Job |
+| `employees` | `class_org_units` | Department data extracted for org hierarchy |
+| `leave_requests` | `class_people` | Leave periods captured as status transitions in SCD2 |
+| `meta_fields` | Custom Attributes Normalizer | Field metadata for custom attribute mapping |
 
 ### Source-Specific Considerations
 
@@ -468,7 +468,7 @@ BambooHR `id` and `supervisorEId` are BambooHR-internal identifiers — retained
 
 2. **Nested response objects**: Leave requests contain nested `status`, `type`, `amount`, `dates`, and `notes` objects. These are stored as JSON strings in Bronze, preserving the full source-native structure for Silver-layer extraction.
 
-3. **Custom report field list**: The employee field list is hardcoded in the manifest. To add custom fields, the manifest must be updated with additional field names (discovered via `bamboohr_meta_fields`).
+3. **Custom report field list**: The employee field list is hardcoded in the manifest. To add custom fields, the manifest must be updated with additional field names (discovered via `meta_fields`).
 
 4. **Department hierarchy**: BambooHR does not expose a dedicated departments endpoint with parent-child relationships. Department names are available inline in employee records. Org hierarchy construction from department data requires the Silver layer to infer relationships from `department` + `division` fields or from `supervisorEmail` chains.
 
